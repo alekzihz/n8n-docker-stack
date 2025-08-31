@@ -1,0 +1,131 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: n8n-postgres
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_DB: ${POSTGRES_DB}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB} -h 127.0.0.1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    volumes:
+      - ./postgres_data:/var/lib/postgresql/data
+    networks: [n8n_net]
+
+  redis:
+    image: redis:7-alpine
+    container_name: n8n-redis
+    command: ["redis-server", "--appendonly", "yes", "--requirepass", "${REDIS_PASSWORD}"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "PING"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    volumes:
+      - ./redis_data:/data
+    networks: [n8n_net]
+
+  n8n-main:
+    image: docker.n8n.io/n8nio/n8n:latest
+    container_name: n8n-main
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    ports:
+      - "${N8N_PORT}:5678"
+    environment:
+      # Zona horaria
+      TZ: ${TZ}
+      GENERIC_TIMEZONE: ${GENERIC_TIMEZONE}
+
+         # --- NUEVO / RECOMENDADO ---
+      N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS: "true"
+      N8N_RUNNERS_ENABLED: "true"
+      OFFLOAD_MANUAL_EXECUTIONS_TO_WORKERS: "true"
+
+      # DB Postgres
+      DB_TYPE: ${DB_TYPE}
+      DB_POSTGRESDB_HOST: ${DB_POSTGRESDB_HOST}
+      DB_POSTGRESDB_PORT: ${DB_POSTGRESDB_PORT}
+      DB_POSTGRESDB_DATABASE: ${DB_POSTGRESDB_DATABASE}
+      DB_POSTGRESDB_SCHEMA: ${DB_POSTGRESDB_SCHEMA}
+      DB_POSTGRESDB_USER: ${DB_POSTGRESDB_USER}
+      DB_POSTGRESDB_PASSWORD: ${DB_POSTGRESDB_PASSWORD}
+
+      # Queue mode
+      EXECUTIONS_MODE: ${EXECUTIONS_MODE}
+      QUEUE_BULL_REDIS_HOST: ${QUEUE_BULL_REDIS_HOST}
+      QUEUE_BULL_REDIS_PORT: ${QUEUE_BULL_REDIS_PORT}
+      QUEUE_BULL_REDIS_DB: ${QUEUE_BULL_REDIS_DB}
+      QUEUE_BULL_REDIS_PASSWORD: ${QUEUE_BULL_REDIS_PASSWORD}
+      QUEUE_BULL_PREFIX: ${QUEUE_BULL_PREFIX}
+      QUEUE_HEALTH_CHECK_ACTIVE: ${QUEUE_HEALTH_CHECK_ACTIVE}
+
+      # Enrutamiento / URLs
+      N8N_HOST: ${N8N_HOST}
+      N8N_PORT: 5678
+      N8N_EDITOR_BASE_URL: ${N8N_EDITOR_BASE_URL}
+      WEBHOOK_URL: ${WEBHOOK_URL}
+
+      # Seguridad
+      N8N_ENCRYPTION_KEY: ${N8N_ENCRYPTION_KEY}
+      N8N_DIAGNOSTICS_ENABLED: ${N8N_DIAGNOSTICS_ENABLED}
+      N8N_SECURE_COOKIE: "false"   # pon "true" cuando vayas por HTTPS
+
+      # (Opcional) Si usaras multi-main detrás de LB con sticky sessions:
+      # N8N_MULTI_MAIN_SETUP_ENABLED: "true"
+
+    volumes:
+      - ./n8n_data:/home/node/.n8n
+    networks: [n8n_net]
+    restart: unless-stopped
+
+  n8n-worker:
+    image: docker.n8n.io/n8nio/n8n:latest
+    container_name: n8n-worker-1
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      # Mismo entorno que el main (DB/Redis/Key/timezone)
+      TZ: ${TZ}
+      GENERIC_TIMEZONE: ${GENERIC_TIMEZONE}
+
+      DB_TYPE: ${DB_TYPE}
+      DB_POSTGRESDB_HOST: ${DB_POSTGRESDB_HOST}
+      DB_POSTGRESDB_PORT: ${DB_POSTGRESDB_PORT}
+      DB_POSTGRESDB_DATABASE: ${DB_POSTGRESDB_DATABASE}
+      DB_POSTGRESDB_SCHEMA: ${DB_POSTGRESDB_SCHEMA}
+      DB_POSTGRESDB_USER: ${DB_POSTGRESDB_USER}
+      DB_POSTGRESDB_PASSWORD: ${DB_POSTGRESDB_PASSWORD}
+
+      EXECUTIONS_MODE: ${EXECUTIONS_MODE}
+      QUEUE_BULL_REDIS_HOST: ${QUEUE_BULL_REDIS_HOST}
+      QUEUE_BULL_REDIS_PORT: ${QUEUE_BULL_REDIS_PORT}
+      QUEUE_BULL_REDIS_DB: ${QUEUE_BULL_REDIS_DB}
+      QUEUE_BULL_REDIS_PASSWORD: ${QUEUE_BULL_REDIS_PASSWORD}
+      QUEUE_BULL_PREFIX: ${QUEUE_BULL_PREFIX}
+
+      N8N_ENCRYPTION_KEY: ${N8N_ENCRYPTION_KEY}
+
+      # ¡Este define que es worker!
+      N8N_MODE: worker
+
+      # Para evitar que el worker intente servir editor/webhooks
+      # (algunas versiones lo ignoran, pero no está de más)
+      WEBHOOK_URL: ${WEBHOOK_URL}
+
+    networks: [n8n_net]
+    restart: unless-stopped
+    # Escala manual: duplica este servicio con nombres distintos o usa `--scale` (compose v2).
+
+networks:
+  n8n_net:
+    driver: bridge
